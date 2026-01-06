@@ -4,7 +4,7 @@ from datetime import date
 from io import BytesIO
 import zipfile
 
-st.set_page_config(page_title="Caixa Fácil", layout="centered")
+st.set_page_config(page_title="💰 Caixa Fácil", layout="wide")
 
 # ================== ESTADO ==================
 if "pagamentos" not in st.session_state:
@@ -12,6 +12,9 @@ if "pagamentos" not in st.session_state:
 
 if "caixa_fechado" not in st.session_state:
     st.session_state.caixa_fechado = False
+
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0  # Para resetar o file_uploader
 
 # ================== FUNÇÕES ==================
 def calcular_totais(pagamentos):
@@ -48,17 +51,24 @@ def gerar_relatorio_zip(pagamentos, data_caixa):
     zip_buffer.seek(0)
     return zip_buffer
 
+def cor_card(forma):
+    cores = {
+        "PIX": "#d4f7dc",
+        "Crédito": "#d0e0ff",
+        "Débito": "#ffe6d4",
+        "Dinheiro": "#fff3b0"
+    }
+    return cores.get(forma, "#f0f0f0")
+
 # ================== INTERFACE ==================
 st.title("💰 Caixa Fácil")
 st.caption("Sistema pessoal de ensino de caixa")
-
 data_caixa = st.date_input("📅 Data do caixa", value=date.today())
 
 st.divider()
 
 # ================== NOVO PAGAMENTO ==================
 st.subheader("➕ Novo pagamento")
-
 if st.session_state.caixa_fechado:
     st.info("🔒 Caixa fechado.")
 else:
@@ -71,11 +81,10 @@ else:
         )
         comprovante = st.file_uploader(
             "Comprovante (opcional)",
-            type=["jpg", "jpeg", "png"]
+            type=["jpg", "jpeg", "png"],
+            key=st.session_state.uploader_key
         )
-
         enviar = st.form_submit_button("Adicionar")
-
         if enviar and cliente and valor > 0:
             st.session_state.pagamentos.append(
                 {
@@ -86,44 +95,50 @@ else:
                     "Comprovante": comprovante,
                 }
             )
+            st.session_state.uploader_key += 1  # reset uploader
             st.success("Pagamento registrado.")
 
-# ================== LISTAGEM ==================
+# ================== LISTAGEM MODERNA ==================
 st.divider()
 st.subheader("📋 Pagamentos do dia")
-
 if not st.session_state.pagamentos:
     st.info("Nenhum pagamento registrado.")
 else:
     for i, p in enumerate(st.session_state.pagamentos):
-        c1, c2, c3, c4, c5 = st.columns([1, 3, 2, 2, 1])
-        c1.write(i + 1)
-        c2.write(p["Cliente"])
-        c3.write(f"R$ {p['Valor']:.2f}")
-        c4.write(p["Forma"])
-
-        if not st.session_state.caixa_fechado:
-            if c5.button("🗑️", key=f"del_{i}"):
-                st.session_state.pagamentos.pop(i)
-                st.experimental_rerun()
+        with st.container():
+            st.markdown(
+                f"""
+                <div style="background-color:{cor_card(p['Forma'])};
+                            padding:15px;
+                            border-radius:10px;
+                            margin-bottom:5px;">
+                <b>{i+1}. {p['Cliente']}</b> | R$ {p['Valor']:.2f} | {p['Forma']} 
+                {"| ✅ Comprovante" if p['Comprovante'] else ""}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            if not st.session_state.caixa_fechado:
+                if st.button("🗑️ Apagar", key=f"del_{i}"):
+                    st.session_state.pagamentos.pop(i)
+                    st.experimental_rerun()
 
 # ================== TOTAIS ==================
 st.divider()
 st.subheader("📊 Totais")
-
 totais = calcular_totais(st.session_state.pagamentos)
 total_geral = sum(totais.values())
 
-st.write(f"💳 PIX: R$ {totais['PIX']:.2f}")
-st.write(f"💳 Crédito: R$ {totais['Crédito']:.2f}")
-st.write(f"💳 Débito: R$ {totais['Débito']:.2f}")
-st.write(f"💵 Dinheiro: R$ {totais['Dinheiro']:.2f}")
-st.write(f"### 💰 Total geral: R$ {total_geral:.2f}")
+col1, col2, col3, col4, col5 = st.columns(5)
+col1.metric("💳 PIX", f"R$ {totais['PIX']:.2f}")
+col2.metric("💳 Crédito", f"R$ {totais['Crédito']:.2f}")
+col3.metric("💳 Débito", f"R$ {totais['Débito']:.2f}")
+col4.metric("💵 Dinheiro", f"R$ {totais['Dinheiro']:.2f}")
+col5.metric("💰 Total geral", f"R$ {total_geral:.2f}")
 
 # ================== FECHAMENTO ==================
 st.divider()
 st.subheader("🔒 Fechamento")
-
 if not st.session_state.caixa_fechado:
     if st.button("Fechar caixa"):
         st.session_state.caixa_fechado = True
@@ -134,14 +149,12 @@ else:
 # ================== RELATÓRIO ==================
 st.divider()
 st.subheader("📥 Relatório")
-
 if not st.session_state.caixa_fechado:
     st.warning("Feche o caixa para gerar o relatório.")
 elif not st.session_state.pagamentos:
     st.warning("Nenhum pagamento para relatório.")
 else:
     zip_file = gerar_relatorio_zip(st.session_state.pagamentos, data_caixa)
-
     st.download_button(
         "📦 Baixar relatório (CSV + comprovantes)",
         data=zip_file,
