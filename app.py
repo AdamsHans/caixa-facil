@@ -1,158 +1,149 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 import os
 import zipfile
-import re
 from io import BytesIO
 from datetime import date
 
-# ---------------- CONFIGURAÇÃO ----------------
-st.set_page_config(page_title="Caixa Fácil", page_icon="💰", layout="centered")
+# =============================
+# CONFIGURAÇÃO INICIAL
+# =============================
+st.set_page_config(
+    page_title="Caixa Fácil",
+    page_icon="💰",
+    layout="centered"
+)
 
-DB_NAME = "pagamentos.db"
-PASTA_COMPROVANTES = "comprovantes"
-
-os.makedirs(PASTA_COMPROVANTES, exist_ok=True)
-
-# ---------------- FUNÇÕES AUXILIARES ----------------
-def limpar_nome(texto):
-    texto = texto.strip().replace(" ", "_")
-    texto = re.sub(r"[^a-zA-Z0-9_-]", "", texto)
-    return texto.lower()
-
-def conectar_db():
-    return sqlite3.connect(DB_NAME)
-
-def criar_tabela():
-    with conectar_db() as conn:
-        conn.execute("""
-        CREATE TABLE IF NOT EXISTS pagamentos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            cliente TEXT,
-            valor REAL,
-            forma TEXT,
-            comprovante TEXT
-        )
-        """)
-
-def salvar_pagamento(data, cliente, valor, forma, comprovante):
-    with conectar_db() as conn:
-        conn.execute(
-            "INSERT INTO pagamentos VALUES (NULL, ?, ?, ?, ?, ?)",
-            (data, cliente, valor, forma, comprovante)
-        )
-
-def carregar_pagamentos(data):
-    with conectar_db() as conn:
-        return pd.read_sql(
-            "SELECT * FROM pagamentos WHERE data = ?",
-            conn,
-            params=(data,)
-        )
-
-def gerar_relatorio_zip(df, data_caixa):
-    buffer = BytesIO()
-
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
-        # Excel
-        excel_buffer = BytesIO()
-        df.to_excel(excel_buffer, index=False)
-        zipf.writestr(f"relatorio_{data_caixa}.xlsx", excel_buffer.getvalue())
-
-        # Comprovantes
-        for _, row in df.iterrows():
-            if row["comprovante"]:
-                caminho = os.path.join(PASTA_COMPROVANTES, row["comprovante"])
-                if os.path.exists(caminho):
-                    zipf.write(caminho, arcname=f"comprovantes/{row['comprovante']}")
-
-    buffer.seek(0)
-    return buffer
-
-# ---------------- INICIALIZAÇÃO ----------------
-criar_tabela()
-
-# ---------------- INTERFACE ----------------
 st.title("💰 Caixa Fácil")
 st.caption("Sistema pessoal de fechamento de caixa")
 
-data_caixa = st.date_input("📅 Data do caixa", value=date.today()).isoformat()
+# =============================
+# PASTA DE DADOS
+# =============================
+BASE_DIR = "dados"
+COMPROVANTES_DIR = os.path.join(BASE_DIR, "comprovantes")
+os.makedirs(COMPROVANTES_DIR, exist_ok=True)
 
-st.divider()
+# =============================
+# DATA DO CAIXA
+# =============================
+data_caixa = st.date_input("📅 Data do caixa", value=date.today())
+arquivo_csv = os.path.join(BASE_DIR, f"caixa_{data_caixa}.csv")
+
+# =============================
+# CARREGAR DADOS
+# =============================
+if os.path.exists(arquivo_csv):
+    df = pd.read_csv(arquivo_csv)
+else:
+    df = pd.DataFrame(columns=["data", "cliente", "valor", "forma", "comprovante"])
+
+# =============================
+# NOVO PAGAMENTO
+# =============================
 st.subheader("➕ Novo pagamento")
 
-with st.form("form_pagamento", clear_on_submit=True):
-    nome_cliente = st.text_input("Nome do cliente")
-    valor = st.number_input("Valor (R$)", min_value=0.0, step=0.01, format="%.2f")
-    forma_pagamento = st.selectbox(
-        "Forma de pagamento",
-        ["PIX", "DéBITO", "CRÉDITO", "ESPÉCIE"]
-    )
-    comprovante = st.file_uploader(
-        "Comprovante (opcional)",
-        type=["jpg", "jpeg", "png", "pdf"]
-    )
+cliente = st.text_input("Nome do cliente")
+valor = st.number_input("Valor (R$)", min_value=0.0, step=1.0, format="%.2f")
+forma = st.selectbox("Forma de pagamento", ["PIX", "Débito", "Crédito", "Espécie"])
+arquivo = st.file_uploader(
+    "Comprovante (opcional)",
+    type=["jpg", "jpeg", "png", "pdf"]
+)
 
-    enviar = st.form_submit_button("Salvar pagamento")
+if st.button("Salvar pagamento"):
+    if cliente and valor > 0:
+        caminho_comprovante = ""
 
-    if enviar:
-        if nome_cliente and valor > 0:
-            arquivo_nome = None
+        if arquivo:
+            nome_arquivo = f"{data_caixa}_{cliente}_{valor:.2f}.{arquivo.name.split('.')[-1]}"
+            caminho_comprovante = os.path.join(COMPROVANTES_DIR, nome_arquivo)
 
-            if comprovante:
-                extensao = os.path.splitext(comprovante.name)[1]
-                nome_limpo = limpar_nome(nome_cliente)
-                valor_fmt = f"{valor:.2f}"
+            with open(caminho_comprovante, "wb") as f:
+                f.write(arquivo.getbuffer())
 
-                arquivo_nome = f"{data_caixa}_{forma_pagamento}_{nome_limpo}_{valor_fmt}{extensao}"
-                caminho = os.path.join(PASTA_COMPROVANTES, arquivo_nome)
+        novo = {
+            "data": data_caixa,
+            "cliente": cliente,
+            "valor": valor,
+            "forma": forma,
+            "comprovante": caminho_comprovante
+        }
 
-                with open(caminho, "wb") as f:
-                    f.write(comprovante.getbuffer())
+        df = pd.concat([df, pd.DataFrame([novo])], ignore_index=True)
+        df.to_csv(arquivo_csv, index=False)
+        st.success("Pagamento salvo com sucesso!")
+        st.rerun()
+    else:
+        st.warning("Preencha corretamente cliente e valor.")
 
-            salvar_pagamento(
-                data_caixa,
-                nome_cliente,
-                valor,
-                forma_pagamento,
-                arquivo_nome
-            )
-
-            st.success("Pagamento salvo com sucesso ✅")
-        else:
-            st.error("Preencha o nome e um valor válido.")
-
-# ---------------- LISTAGEM ----------------
-st.divider()
+# =============================
+# PAGAMENTOS DO DIA
+# =============================
 st.subheader("📋 Pagamentos do dia")
 
-df = carregar_pagamentos(data_caixa)
-
 if not df.empty:
-    st.dataframe(
-        df[["cliente", "valor", "forma", "comprovante"]],
-        use_container_width=True
-    )
+    st.dataframe(df[["cliente", "valor", "forma"]], use_container_width=True)
 
     st.subheader("📊 Totais")
     total_pix = df[df["forma"] == "PIX"]["valor"].sum()
     total_geral = df["valor"].sum()
 
-    st.metric("Total PIX", f"R$ {total_pix:.2f}")
-    st.metric("💵 Total Geral", f"R$ {total_geral:.2f}")
+    st.write(f"**Total PIX:** R$ {total_pix:.2f}")
+    st.write(f"**💵 Total Geral:** R$ {total_geral:.2f}")
+else:
+    st.info("Nenhum pagamento registrado.")
 
-    st.divider()
-    st.subheader("📥 Relatório do dia")
+# =============================
+# FUNÇÃO DE RELATÓRIO (ANTI-ERRO)
+# =============================
+def gerar_relatorio_zip(df, data_caixa):
+    zip_buffer = BytesIO()
 
-    relatorio = gerar_relatorio_zip(df, data_caixa)
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+
+        # TENTAR EXCEL
+        try:
+            excel_buffer = BytesIO()
+            df.to_excel(excel_buffer, index=False)
+            zipf.writestr(
+                f"relatorio_{data_caixa}.xlsx",
+                excel_buffer.getvalue()
+            )
+            formato = "Excel (.xlsx)"
+
+        except Exception:
+            # FALLBACK CSV
+            csv_buffer = BytesIO()
+            df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
+            zipf.writestr(
+                f"relatorio_{data_caixa}.csv",
+                csv_buffer.getvalue()
+            )
+            formato = "CSV (.csv)"
+
+        # COMPROVANTES
+        for _, row in df.iterrows():
+            if isinstance(row["comprovante"], str) and row["comprovante"]:
+                if os.path.exists(row["comprovante"]):
+                    zipf.write(
+                        row["comprovante"],
+                        arcname=os.path.basename(row["comprovante"])
+                    )
+
+    return zip_buffer.getvalue(), formato
+
+# =============================
+# DOWNLOAD DO RELATÓRIO
+# =============================
+st.subheader("📥 Relatório do dia")
+
+if not df.empty:
+    relatorio, formato = gerar_relatorio_zip(df, data_caixa)
 
     st.download_button(
-        label="📦 Baixar relatório (Excel + comprovantes)",
+        label=f"📥 Baixar relatório ({formato})",
         data=relatorio,
-        file_name=f"relatorio_caixa_{data_caixa}.zip",
+        file_name=f"caixa_{data_caixa}.zip",
         mime="application/zip"
     )
-else:
-    st.info("Nenhum pagamento registrado para esta data.")
