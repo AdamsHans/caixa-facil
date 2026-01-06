@@ -9,9 +9,9 @@ st.set_page_config(page_title="Caixa Fácil", page_icon="💰", layout="centered
 st.title("💰 Caixa Fácil")
 st.caption("Sistema pessoal de ensino de caixa")
 
-# -------------------------------
+# ===============================
 # ESTADO
-# -------------------------------
+# ===============================
 if "pagamentos" not in st.session_state:
     st.session_state.pagamentos = []
 
@@ -21,15 +21,19 @@ if "contador_id" not in st.session_state:
 if "caixa_fechado" not in st.session_state:
     st.session_state.caixa_fechado = False
 
-# -------------------------------
+# ===============================
 # DATA
-# -------------------------------
+# ===============================
 st.markdown("### 📅 Dados do caixa")
-data_caixa = st.date_input("Data", value=date.today(), disabled=st.session_state.caixa_fechado)
+data_caixa = st.date_input(
+    "Data",
+    value=date.today(),
+    disabled=st.session_state.caixa_fechado
+)
 
-# -------------------------------
+# ===============================
 # NOVO PAGAMENTO
-# -------------------------------
+# ===============================
 st.markdown("### ➕ Novo pagamento")
 
 if not st.session_state.caixa_fechado:
@@ -73,9 +77,9 @@ if not st.session_state.caixa_fechado:
 else:
     st.info("🔒 Caixa fechado.")
 
-# -------------------------------
+# ===============================
 # LISTAGEM
-# -------------------------------
+# ===============================
 st.markdown("### 📋 Pagamentos do dia")
 
 if st.session_state.pagamentos:
@@ -95,47 +99,59 @@ if st.session_state.pagamentos:
 else:
     st.info("Nenhum pagamento registrado.")
 
-# -------------------------------
-# TOTAIS
-# -------------------------------
+# ===============================
+# TOTAIS (COMPLETOS)
+# ===============================
 st.markdown("### 📊 Totais")
 
-df = pd.DataFrame(st.session_state.pagamentos) if st.session_state.pagamentos else pd.DataFrame()
+if st.session_state.pagamentos:
+    df = pd.DataFrame(st.session_state.pagamentos)
 
-total_pix = df[df["Forma"] == "PIX"]["Valor"].sum() if not df.empty else 0
-total_geral = df["Valor"].sum() if not df.empty else 0
+    total_pix = df[df["Forma"] == "PIX"]["Valor"].sum()
+    total_credito = df[df["Forma"] == "Crédito"]["Valor"].sum()
+    total_debito = df[df["Forma"] == "Débito"]["Valor"].sum()
+    total_dinheiro = df[df["Forma"] == "Dinheiro"]["Valor"].sum()
+    total_geral = df["Valor"].sum()
 
-st.metric("PIX total", f"R$ {total_pix:.2f}")
-st.metric("💵 Total geral", f"R$ {total_geral:.2f}")
+    c1, c2 = st.columns(2)
+    c1.metric("💳 PIX", f"R$ {total_pix:.2f}")
+    c2.metric("💳 Crédito", f"R$ {total_credito:.2f}")
 
-# -------------------------------
+    c3, c4 = st.columns(2)
+    c3.metric("💳 Débito", f"R$ {total_debito:.2f}")
+    c4.metric("💵 Dinheiro", f"R$ {total_dinheiro:.2f}")
+
+    st.divider()
+    st.metric("💰 Total geral", f"R$ {total_geral:.2f}")
+else:
+    st.info("Sem pagamentos para calcular totais.")
+
+# ===============================
 # FECHAR CAIXA
-# -------------------------------
+# ===============================
 st.markdown("### 🔒 Fechamento")
 
 if not st.session_state.caixa_fechado:
     if st.button("Fechar caixa"):
         st.session_state.caixa_fechado = True
-        st.success("Caixa fechado!")
+        st.success("Caixa fechado com sucesso!")
 else:
     st.success("Caixa já fechado.")
 
-# -------------------------------
+# ===============================
 # RELATÓRIO
-# -------------------------------
+# ===============================
 st.markdown("### 📥 Relatório")
 
 def gerar_zip(pagamentos, data):
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, "w") as zipf:
-        # Excel
         df = pd.DataFrame(pagamentos).drop(columns=["Bytes"])
         excel_buffer = io.BytesIO()
         df.to_excel(excel_buffer, index=False)
         zipf.writestr(f"relatorio_caixa_{data}.xlsx", excel_buffer.getvalue())
 
-        # Comprovantes
         for p in pagamentos:
             if p["Arquivo"] and p["Bytes"]:
                 zipf.writestr(f"comprovantes/{p['Arquivo']}", p["Bytes"])
