@@ -1,149 +1,171 @@
 import streamlit as st
 import pandas as pd
-import os
-import zipfile
-from io import BytesIO
 from datetime import date
+import io
+import zipfile
 
-# =============================
-# CONFIGURAÇÃO INICIAL
-# =============================
-st.set_page_config(
-    page_title="Caixa Fácil",
-    page_icon="💰",
-    layout="centered"
-)
+st.set_page_config(page_title="Caixa Fácil", page_icon="💰", layout="centered")
 
 st.title("💰 Caixa Fácil")
-st.caption("Sistema pessoal de fechamento de caixa")
+st.caption("Sistema pessoal de ensino de caixa")
 
-# =============================
-# PASTA DE DADOS
-# =============================
-BASE_DIR = "dados"
-COMPROVANTES_DIR = os.path.join(BASE_DIR, "comprovantes")
-os.makedirs(COMPROVANTES_DIR, exist_ok=True)
+# -------------------------------
+# ESTADO GLOBAL
+# -------------------------------
+if "pagamentos" not in st.session_state:
+    st.session_state.pagamentos = []
 
-# =============================
+if "contador_id" not in st.session_state:
+    st.session_state.contador_id = 1
+
+if "caixa_fechado" not in st.session_state:
+    st.session_state.caixa_fechado = False
+
+if "historico" not in st.session_state:
+    st.session_state.historico = []
+
+# -------------------------------
 # DATA DO CAIXA
-# =============================
-data_caixa = st.date_input("📅 Data do caixa", value=date.today())
-arquivo_csv = os.path.join(BASE_DIR, f"caixa_{data_caixa}.csv")
+# -------------------------------
+st.markdown("### 📅 Dados do caixa")
+data_caixa = st.date_input("Data", value=date.today(), disabled=st.session_state.caixa_fechado)
 
-# =============================
-# CARREGAR DADOS
-# =============================
-if os.path.exists(arquivo_csv):
-    df = pd.read_csv(arquivo_csv)
-else:
-    df = pd.DataFrame(columns=["data", "cliente", "valor", "forma", "comprovante"])
-
-# =============================
+# -------------------------------
 # NOVO PAGAMENTO
-# =============================
-st.subheader("➕ Novo pagamento")
+# -------------------------------
+st.markdown("### ➕ Novo pagamento")
 
-cliente = st.text_input("Nome do cliente")
-valor = st.number_input("Valor (R$)", min_value=0.0, step=1.0, format="%.2f")
-forma = st.selectbox("Forma de pagamento", ["PIX", "Débito", "Crédito", "Espécie"])
-arquivo = st.file_uploader(
-    "Comprovante (opcional)",
-    type=["jpg", "jpeg", "png", "pdf"]
-)
+if st.session_state.caixa_fechado:
+    st.info("🔒 Caixa fechado. Não é possível adicionar pagamentos.")
+else:
+    with st.form("form_pagamento"):
+        nome = st.text_input("Nome do cliente")
+        valor = st.number_input("Valor (R$)", min_value=0.01, format="%.2f")
+        forma = st.selectbox("Forma de pagamento", ["PIX", "Dinheiro", "Cartão"])
 
-if st.button("Salvar pagamento"):
-    if cliente and valor > 0:
-        caminho_comprovante = ""
+        enviar = st.form_submit_button("Adicionar pagamento")
 
-        if arquivo:
-            nome_arquivo = f"{data_caixa}_{cliente}_{valor:.2f}.{arquivo.name.split('.')[-1]}"
-            caminho_comprovante = os.path.join(COMPROVANTES_DIR, nome_arquivo)
+        if enviar:
+            st.session_state.pagamentos.append({
+                "ID": st.session_state.contador_id,
+                "Data": str(data_caixa),
+                "Cliente": nome,
+                "Valor": valor,
+                "Forma": forma
+            })
+            st.session_state.contador_id += 1
+            st.success("Pagamento adicionado!")
 
-            with open(caminho_comprovante, "wb") as f:
-                f.write(arquivo.getbuffer())
+# -------------------------------
+# LISTA DE PAGAMENTOS
+# -------------------------------
+st.markdown("### 📋 Pagamentos do dia")
 
-        novo = {
-            "data": data_caixa,
-            "cliente": cliente,
-            "valor": valor,
-            "forma": forma,
-            "comprovante": caminho_comprovante
-        }
+if st.session_state.pagamentos:
+    df = pd.DataFrame(st.session_state.pagamentos)
 
-        df = pd.concat([df, pd.DataFrame([novo])], ignore_index=True)
-        df.to_csv(arquivo_csv, index=False)
-        st.success("Pagamento salvo com sucesso!")
-        st.rerun()
-    else:
-        st.warning("Preencha corretamente cliente e valor.")
+    for _, row in df.iterrows():
+        col1, col2, col3, col4, col5 = st.columns([1, 3, 2, 2, 1])
 
-# =============================
-# PAGAMENTOS DO DIA
-# =============================
-st.subheader("📋 Pagamentos do dia")
+        col1.write(row["ID"])
+        col2.write(row["Cliente"])
+        col3.write(f"R$ {row['Valor']:.2f}")
+        col4.write(row["Forma"])
 
-if not df.empty:
-    st.dataframe(df[["cliente", "valor", "forma"]], use_container_width=True)
+        if not st.session_state.caixa_fechado:
+            if col5.button("🗑", key=f"del_{row['ID']}"):
+                st.session_state["confirmar_delete"] = row["ID"]
 
-    st.subheader("📊 Totais")
-    total_pix = df[df["forma"] == "PIX"]["valor"].sum()
-    total_geral = df["valor"].sum()
-
-    st.write(f"**Total PIX:** R$ {total_pix:.2f}")
-    st.write(f"**💵 Total Geral:** R$ {total_geral:.2f}")
 else:
     st.info("Nenhum pagamento registrado.")
 
-# =============================
-# FUNÇÃO DE RELATÓRIO (ANTI-ERRO)
-# =============================
-def gerar_relatorio_zip(df, data_caixa):
-    zip_buffer = BytesIO()
+# -------------------------------
+# CONFIRMAÇÃO DE EXCLUSÃO
+# -------------------------------
+if "confirmar_delete" in st.session_state:
+    st.warning("⚠️ Deseja realmente excluir este pagamento?")
+    c1, c2 = st.columns(2)
 
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zipf:
+    if c1.button("✅ Sim"):
+        st.session_state.pagamentos = [
+            p for p in st.session_state.pagamentos
+            if p["ID"] != st.session_state.confirmar_delete
+        ]
+        del st.session_state["confirmar_delete"]
+        st.experimental_rerun()
 
-        # TENTAR EXCEL
-        try:
-            excel_buffer = BytesIO()
-            df.to_excel(excel_buffer, index=False)
-            zipf.writestr(
-                f"relatorio_{data_caixa}.xlsx",
-                excel_buffer.getvalue()
-            )
-            formato = "Excel (.xlsx)"
+    if c2.button("❌ Não"):
+        del st.session_state["confirmar_delete"]
 
-        except Exception:
-            # FALLBACK CSV
-            csv_buffer = BytesIO()
-            df.to_csv(csv_buffer, index=False, encoding="utf-8-sig")
-            zipf.writestr(
-                f"relatorio_{data_caixa}.csv",
-                csv_buffer.getvalue()
-            )
-            formato = "CSV (.csv)"
+# -------------------------------
+# TOTAIS
+# -------------------------------
+st.markdown("### 📊 Totais")
 
-        # COMPROVANTES
-        for _, row in df.iterrows():
-            if isinstance(row["comprovante"], str) and row["comprovante"]:
-                if os.path.exists(row["comprovante"]):
-                    zipf.write(
-                        row["comprovante"],
-                        arcname=os.path.basename(row["comprovante"])
-                    )
+if st.session_state.pagamentos:
+    df = pd.DataFrame(st.session_state.pagamentos)
+    total_pix = df[df["Forma"] == "PIX"]["Valor"].sum()
+    total_geral = df["Valor"].sum()
+else:
+    total_pix = total_geral = 0
 
-    return zip_buffer.getvalue(), formato
+st.metric("PIX total", f"R$ {total_pix:.2f}")
+st.metric("💵 Total geral", f"R$ {total_geral:.2f}")
 
-# =============================
-# DOWNLOAD DO RELATÓRIO
-# =============================
-st.subheader("📥 Relatório do dia")
+# -------------------------------
+# FECHAR CAIXA
+# -------------------------------
+st.markdown("### 🔒 Fechamento")
 
-if not df.empty:
-    relatorio, formato = gerar_relatorio_zip(df, data_caixa)
+if not st.session_state.caixa_fechado:
+    if st.button("Fechar caixa"):
+        st.session_state.caixa_fechado = True
+        st.session_state.historico.append({
+            "data": str(data_caixa),
+            "pagamentos": st.session_state.pagamentos.copy(),
+            "total": total_geral
+        })
+        st.success("Caixa fechado com sucesso!")
+else:
+    st.success("✅ Caixa fechado")
+
+# -------------------------------
+# RELATÓRIO
+# -------------------------------
+st.markdown("### 📥 Relatório")
+
+def gerar_relatorio_zip(df, data):
+    excel_buffer = io.BytesIO()
+    df.to_excel(excel_buffer, index=False)
+    excel_buffer.seek(0)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zipf:
+        zipf.writestr(f"relatorio_caixa_{data}.xlsx", excel_buffer.read())
+
+    zip_buffer.seek(0)
+    return zip_buffer
+
+if st.session_state.caixa_fechado and st.session_state.pagamentos:
+    df = pd.DataFrame(st.session_state.pagamentos)
+    relatorio = gerar_relatorio_zip(df, data_caixa)
 
     st.download_button(
-        label=f"📥 Baixar relatório ({formato})",
+        "⬇️ Baixar relatório",
         data=relatorio,
         file_name=f"caixa_{data_caixa}.zip",
         mime="application/zip"
     )
+else:
+    st.info("Feche o caixa para liberar o relatório.")
+
+# -------------------------------
+# HISTÓRICO
+# -------------------------------
+st.markdown("### 🗂 Histórico da sessão")
+
+if st.session_state.historico:
+    hist_df = pd.DataFrame(st.session_state.historico)
+    st.dataframe(hist_df)
+else:
+    st.caption("Nenhum caixa fechado ainda.")
